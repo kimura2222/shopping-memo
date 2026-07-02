@@ -813,35 +813,7 @@ export default function Home() {
                         >
                           {expanded.has(item.id) ? "詳細を閉じる ▲" : "詳細 ▾"}
                         </button>
-                        {editableFields.length > 0 && !demo && (
-                          <button
-                            className="detail-toggle"
-                            onClick={() => toggleEdit(item)}
-                            aria-expanded={editing.has(item.id)}
-                          >
-                            {editing.has(item.id) ? "編集を閉じる ▲" : "✏️ 編集"}
-                          </button>
-                        )}
                       </div>
-
-                      {editing.has(item.id) && (
-                        <div className="edit">
-                          {editableFields.map((f) => (
-                            <div className="edit-row" key={f.name}>
-                              <label className="edit-label">{f.name}</label>
-                              {renderEditInput(item.id, f)}
-                            </div>
-                          ))}
-                          <div className="edit-actions">
-                            <button className="btn primary" onClick={() => saveEdit(item)}>
-                              保存
-                            </button>
-                            <button className="btn" onClick={() => cancelEdit(item)}>
-                              キャンセル
-                            </button>
-                          </div>
-                        </div>
-                      )}
 
                       {expanded.has(item.id) && (
                         <div className="detail">
@@ -908,6 +880,39 @@ export default function Home() {
                                   </div>
                                 )}
                             </>
+                          )}
+
+                          {editableFields.length > 0 && !demo && (
+                            <div className="detail-edit">
+                              <button
+                                className="detail-toggle"
+                                onClick={() => toggleEdit(item)}
+                                aria-expanded={editing.has(item.id)}
+                              >
+                                {editing.has(item.id) ? "編集を閉じる ▲" : "編集"}
+                              </button>
+                              {editing.has(item.id) && (
+                                <div className="edit">
+                                  {editableFields.map((f) => (
+                                    <div className="edit-row" key={f.name}>
+                                      <label className="edit-label">{f.name}</label>
+                                      {renderEditInput(item.id, f)}
+                                    </div>
+                                  ))}
+                                  <div className="edit-actions">
+                                    <button
+                                      className="btn primary"
+                                      onClick={() => saveEdit(item)}
+                                    >
+                                      保存
+                                    </button>
+                                    <button className="btn" onClick={() => cancelEdit(item)}>
+                                      キャンセル
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}
