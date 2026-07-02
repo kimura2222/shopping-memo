@@ -277,8 +277,8 @@ body {
 /* 条件付き(要認証)は太い色枠で強調。背景色(完了/優先度)とは競合しない。
    done/prio-high より後に置くことで border が確実に優先される。 */
 .item.flagged {
-  border: 2px solid var(--flag);
-  box-shadow: 0 0 0 1px var(--flag), var(--shadow);
+  border: 1px solid var(--flag);
+  box-shadow: 0 0 0 0.5px var(--flag), var(--shadow);
 }
 
 .flag-badge {
