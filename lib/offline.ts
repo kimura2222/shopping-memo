@@ -5,6 +5,7 @@ import type { ShoppingItem, GroupField, EditableField } from "./notion";
 
 const CACHE_KEY = "shoppingCache:v1";
 const QUEUE_KEY = "shoppingQueue:v1";
+const LASTSYNC_KEY = "shoppingLastSync:v1";
 
 export interface CachedData {
   items: ShoppingItem[];
@@ -26,6 +27,8 @@ export interface CachedData {
 export interface QueueOp {
   id: string;
   props: { name: string; type: string; value: any }[];
+  /** 同期の試行回数(上限に達したら破棄してキューの詰まりを防ぐ) */
+  tries?: number;
 }
 
 function safeGet(key: string): any {
@@ -67,4 +70,13 @@ export function enqueue(op: QueueOp) {
   const q = loadQueue();
   q.push(op);
   saveQueue(q);
+}
+
+export function loadLastSync(): number | null {
+  const v = safeGet(LASTSYNC_KEY);
+  return typeof v === "number" ? v : null;
+}
+
+export function saveLastSync(ts: number) {
+  safeSet(LASTSYNC_KEY, ts);
 }

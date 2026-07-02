@@ -12,12 +12,16 @@ import { colorFor } from "@/lib/colors";
 import {
   enqueue,
   loadCache,
+  loadLastSync,
   loadQueue,
   saveCache,
+  saveLastSync,
   saveQueue,
   type CachedData,
   type QueueOp,
 } from "@/lib/offline";
+
+const MAX_SYNC_TRIES = 5;
 
 const NO_GROUP = "__none__";
 const UNSET = "(未設定)";
@@ -104,6 +108,8 @@ export default function Home() {
   // オフライン対応
   const [online, setOnline] = useState(true);
   const [pending, setPending] = useState(0);
+  const [lastSync, setLastSync] = useState<number | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [hideDone, setHideDone] = useState(false);
@@ -153,7 +159,15 @@ export default function Home() {
     }
   }
 
-  // 溜まった更新をNotionへ順次同期。失敗(オフライン等)したらそこで中断して保持。
+  function markSynced() {
+    const ts = Date.now();
+    setLastSync(ts);
+    saveLastSync(ts);
+  }
+
+  // 溜まった更新をNotionへ順次同期。
+  // - ネットワーク不通: そのop以降を保持して中断(オンライン復帰時に再開)
+  // - サーバー拒否(不正な値・削除済み等): 再試行回数を数え、上限で破棄して"詰まり"を防ぐ
   async function flushQueue(): Promise<boolean> {
     const q = loadQueue();
     if (q.length === 0) {
@@ -165,25 +179,44 @@ export default function Home() {
       setPending(q.length);
       return false;
     }
+    const remaining: QueueOp[] = [];
+    let dropped = 0;
+    let networkFailed = false;
     for (let i = 0; i < q.length; i++) {
+      const op = q[i];
+      if (networkFailed) {
+        remaining.push(op); // 不通後は手を付けず保持
+        continue;
+      }
       try {
         const res = await fetch("/api/items", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "update", id: q[i].id, props: q[i].props }),
+          body: JSON.stringify({ action: "update", id: op.id, props: op.props }),
         });
-        if (!res.ok) throw new Error();
+        if (res.ok) continue; // 成功 → キューから除去
+        // サーバーは応答したが失敗 → 再試行回数を加算、上限で破棄
+        const tries = (op.tries ?? 0) + 1;
+        if (tries >= MAX_SYNC_TRIES) dropped++;
+        else remaining.push({ ...op, tries });
       } catch {
-        const remaining = q.slice(i);
-        saveQueue(remaining);
-        setPending(remaining.length);
-        setOnline(false);
-        return false;
+        networkFailed = true; // ネットワーク不通 → 保持して以降中断
+        remaining.push(op);
       }
     }
-    saveQueue([]);
-    setPending(0);
-    return true;
+    saveQueue(remaining);
+    setPending(remaining.length);
+    if (networkFailed) setOnline(false);
+    const fullySynced = remaining.length === 0 && !networkFailed;
+    if (dropped > 0) {
+      setSyncError(
+        `${dropped}件の更新をNotionに反映できませんでした(スキップ)。該当項目を確認してください。`
+      );
+    } else if (fullySynced) {
+      setSyncError(null);
+    }
+    if (fullySynced) markSynced();
+    return fullySynced;
   }
 
   // オンライン時: キュー同期 → 最新取得。オフライン時: キャッシュのまま。
@@ -207,6 +240,7 @@ export default function Home() {
       } else {
         applyData(data, false);
         setError(data.error ?? null);
+        markSynced();
       }
     } catch {
       setOnline(false);
@@ -223,6 +257,7 @@ export default function Home() {
       setLoading(false);
     }
     setPending(loadQueue().length);
+    setLastSync(loadLastSync());
     if (typeof navigator !== "undefined") setOnline(navigator.onLine);
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -622,6 +657,12 @@ export default function Home() {
   );
   const hasPrice = priceProp != null && items.some((it) => it.price != null);
   const yen = (n: number) => "¥" + n.toLocaleString("ja-JP");
+  const fmtSync = (ts: number) => {
+    const d = new Date(ts);
+    const hm = d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  };
 
   const showGroupHeader = groupBy !== NO_GROUP;
 
@@ -646,6 +687,11 @@ export default function Home() {
               未同期 {pending}
             </span>
           )}
+          {lastSync && (
+            <span className="synced" title="Notion と最後に同期した時刻">
+              同期 {fmtSync(lastSync)}
+            </span>
+          )}
         </div>
       </header>
 
@@ -659,6 +705,14 @@ export default function Home() {
       {error && !demo && (
         <div className="banner error">
           <strong>取得エラー:</strong> {error}
+        </div>
+      )}
+      {syncError && (
+        <div className="banner error">
+          <strong>同期エラー:</strong> {syncError}
+          <button className="banner-close" onClick={() => setSyncError(null)}>
+            閉じる
+          </button>
         </div>
       )}
 
