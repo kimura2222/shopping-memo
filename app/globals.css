@@ -11,6 +11,7 @@
   --done-border: #dde1e6;
   --prio-bg: #ffe4ec;
   --prio-border: #f7c9d8;
+  --flag: #dc2626;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04);
   --radius: 14px;
 }
@@ -30,6 +31,7 @@
   --done-border: #30333a;
   --prio-bg: #3a2530;
   --prio-border: #522f3d;
+  --flag: #f87171;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
@@ -270,6 +272,26 @@ body {
 .item.done {
   background: var(--done-bg);
   border-color: var(--done-border);
+}
+
+/* 条件付き(要認証)は太い色枠で強調。背景色(完了/優先度)とは競合しない。
+   done/prio-high より後に置くことで border が確実に優先される。 */
+.item.flagged {
+  border: 2px solid var(--flag);
+  box-shadow: 0 0 0 1px var(--flag), var(--shadow);
+}
+
+.flag-badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--flag);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .checkbox {

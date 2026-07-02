@@ -74,6 +74,8 @@ export interface ShoppingItem {
   extra: { name: string; value: string }[];
   /** 編集用の生の値(列名 → 値)。編集パネルの初期値に使う。 */
   edit: Record<string, EditValue>;
+  /** 「条件付き(要認証)」チェックが入っているか。目立たせる用。 */
+  flagged: boolean;
 }
 
 export interface ItemsResponse {
@@ -98,6 +100,8 @@ export interface ItemsResponse {
 
 // ---- 列名の候補(型で判定 + 名前で優先) ----
 const DONE_NAMES = ["完了", "購入済", "購入済み", "済", "done", "checked", "bought", "get", "getした"];
+// 「条件付き(購入時に要認証)」を示すチェックボックス列の候補
+const CONDITIONAL_NAMES = ["条件付き", "条件付", "要認証", "認証", "conditional", "flag"];
 const PRICE_NAMES = ["値段", "価格", "金額", "料金", "price", "cost"];
 const NOTE_NAMES = ["メモ", "備考", "概要", "note", "notes", "memo", "comment"];
 // タイトルに連結する列(この順に「 / 」で連結)。タイトル型の列を先頭に置く。
@@ -213,6 +217,7 @@ export interface Schema {
   /** どれも空だったとき最後の頼みにする全 rich_text 列 */
   titleFallbacks: string[];
   doneName: string | null;
+  conditionalName: string | null;
   priceName: string | null;
   urlNames: string[];
   noteName: string | null;
@@ -232,6 +237,10 @@ export function buildSchema(properties: Record<string, any>): Schema {
   const titleEntry = firstOfType(entries, "title");
   const doneEntry =
     pickByName(entries, DONE_NAMES, "checkbox") ?? firstOfType(entries, "checkbox");
+  // 条件付き(要認証)チェックボックス: 名前一致を優先、無ければ done 以外のチェックボックス
+  const conditionalEntry =
+    pickByName(entries, CONDITIONAL_NAMES, "checkbox") ??
+    entries.find(([n, p]) => p.type === "checkbox" && n !== doneEntry?.[0]);
   const priceEntry =
     pickByName(entries, PRICE_NAMES, "number") ?? firstOfType(entries, "number");
   const urlNames = entries.filter(([, p]) => p.type === "url").map(([n]) => n);
@@ -337,6 +346,7 @@ export function buildSchema(properties: Record<string, any>): Schema {
     titleExtra,
     titleFallbacks,
     doneName: doneEntry?.[0] ?? null,
+    conditionalName: conditionalEntry?.[0] ?? null,
     priceName: priceEntry?.[0] ?? null,
     urlNames,
     noteName: noteEntry?.[0] ?? null,
@@ -382,6 +392,7 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
       ...partNames,
       ...schema.urlNames,
       schema.doneName,
+      schema.conditionalName,
       schema.priceName,
       schema.noteName,
       usedFallback,
@@ -389,6 +400,9 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
   );
 
   const done = schema.doneName ? props[schema.doneName]?.checkbox === true : false;
+  const flagged = schema.conditionalName
+    ? props[schema.conditionalName]?.checkbox === true
+    : false;
 
   let price: number | null = null;
   if (schema.priceName) {
@@ -421,5 +435,5 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
     edit[f.name] = propToEditValue(props[f.name], f.type);
   }
 
-  return { id: page.id, title, done, price, links, note, values, extra, edit };
+  return { id: page.id, title, done, price, links, note, values, extra, edit, flagged };
 }

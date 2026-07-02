@@ -754,7 +754,7 @@ export default function Home() {
                         : item.values[PRIORITY_FIELD]?.includes(PRIORITY_HIGH)
                         ? "prio-high"
                         : ""
-                    }`}
+                    } ${item.flagged ? "flagged" : ""}`}
                   >
                     <input
                       className="checkbox"
@@ -765,7 +765,10 @@ export default function Home() {
                     />
                     <div className="item-body">
                       <div className="item-row">
-                        <span className="item-title">{item.title}</span>
+                        <span className="item-title">
+                          {item.flagged && <span className="flag-badge">要認証</span>}
+                          {item.title}
+                        </span>
                         {item.price != null && (
                           <span className="price">{yen(item.price)}</span>
                         )}

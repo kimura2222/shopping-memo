@@ -47,6 +47,7 @@ function it(
     values: { カテゴリ: [cat], 優先度: [pri] },
     extra,
     edit: {},
+    flagged: false,
   };
 }
 
