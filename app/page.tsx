@@ -108,6 +108,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [hideDone, setHideDone] = useState(false);
   const [groupBy, setGroupBy] = useState<string>(NO_GROUP);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   // テーマ(自動 / ライト / ダーク)
   const [theme, setTheme] = useState<"system" | "light" | "dark">("system");
@@ -227,11 +228,18 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // テーマ: 起動時に保存値を復元
+  // テーマ・並び順: 起動時に保存値を復元
   useEffect(() => {
     const saved = localStorage.getItem("theme");
     if (saved === "light" || saved === "dark" || saved === "system") setTheme(saved);
+    const dir = localStorage.getItem("sortDir");
+    if (dir === "asc" || dir === "desc") setSortDir(dir);
   }, []);
+
+  // 並び順の選択を保存
+  useEffect(() => {
+    localStorage.setItem("sortDir", sortDir);
+  }, [sortDir]);
 
   // テーマ: 選択を <html data-theme> へ反映し保存。自動時は OS 設定に追従。
   useEffect(() => {
@@ -580,9 +588,10 @@ export default function Home() {
         .toLowerCase();
       return hay.includes(q);
     });
-    // 基本並び順: タイトルを50音順(濁音・半濁音は後ろ)
-    return list.sort((a, b) => jpCompare(a.title, b.title));
-  }, [items, query, hideDone]);
+    // 基本並び順: タイトルを50音順(濁音・半濁音は後ろ)。昇順/降順で反転。
+    const dir = sortDir === "asc" ? 1 : -1;
+    return list.sort((a, b) => jpCompare(a.title, b.title) * dir);
+  }, [items, query, hideDone, sortDir]);
 
   const grouped = useMemo(() => {
     if (groupBy === NO_GROUP) return [[UNSET, filtered]] as [string, ShoppingItem[]][];
@@ -674,6 +683,13 @@ export default function Home() {
             </select>
           </label>
         )}
+        <button
+          className="btn"
+          onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+          title="昇順 / 降順を切替"
+        >
+          {sortDir === "asc" ? "↑ 昇順" : "↓ 降順"}
+        </button>
         <button
           className={`btn ${hideDone ? "active" : ""}`}
           onClick={() => setHideDone((v) => !v)}
