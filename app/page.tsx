@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { GroupField, ItemsResponse, ShoppingItem } from "@/lib/notion";
+import type {
+  EditableField,
+  EditValue,
+  GroupField,
+  ItemsResponse,
+  ShoppingItem,
+} from "@/lib/notion";
 import { colorFor } from "@/lib/colors";
 import {
   enqueue,
@@ -112,6 +118,14 @@ export default function Home() {
     Record<string, Detail>
   >({});
 
+  // 編集パネル
+  const [editableFields, setEditableFields] = useState<EditableField[]>([]);
+  const [titleParts, setTitleParts] = useState<string[]>([]);
+  const [noteProp, setNoteProp] = useState<string | null>(null);
+  const [urlProps, setUrlProps] = useState<string[]>([]);
+  const [editing, setEditing] = useState<Set<string>>(new Set());
+  const [draft, setDraft] = useState<Record<string, Record<string, EditValue>>>({});
+
   // 取得データ(サーバー/キャッシュ共通)を画面状態へ反映
   function applyData(data: Partial<CachedData> & Partial<ItemsResponse>, fromCache: boolean) {
     setItems(data.items ?? []);
@@ -122,6 +136,10 @@ export default function Home() {
     setStatusComplete(data.statusCompleteValue ?? null);
     setStatusCompleteSet(new Set(data.statusCompleteValues ?? []));
     setStatusTodo(data.statusTodoValue ?? null);
+    setEditableFields(data.editableFields ?? []);
+    setTitleParts(data.titleParts ?? []);
+    setNoteProp(data.noteProp ?? null);
+    setUrlProps(data.urlProps ?? []);
     setDemo(data.demo ?? false);
     if (fromCache) {
       setGroupBy(data.defaultGroup ?? NO_GROUP);
@@ -264,9 +282,13 @@ export default function Home() {
       statusTodoValue: statusTodo,
       defaultGroup: groupBy,
       demo,
+      editableFields,
+      titleParts,
+      noteProp,
+      urlProps,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, fields, groupBy, doneProp, priceProp, statusProp, statusComplete, statusTodo, demo, loading]);
+  }, [items, fields, groupBy, doneProp, priceProp, statusProp, statusComplete, statusTodo, demo, loading, editableFields, titleParts, noteProp, urlProps]);
 
   const fieldMap = useMemo(() => {
     const m = new Map<string, GroupField>();
@@ -341,6 +363,167 @@ export default function Home() {
     ];
     if (syncDone) props.push({ name: doneProp!, type: "checkbox", value: nextDone });
     await sendUpdate(item.id, props);
+  }
+
+  // ---- 項目内容の編集 ----
+  function toggleEdit(item: ShoppingItem) {
+    setEditing((prev) => {
+      const next = new Set(prev);
+      if (next.has(item.id)) next.delete(item.id);
+      else next.add(item.id);
+      return next;
+    });
+    if (!editing.has(item.id)) {
+      setDraft((prev) => ({ ...prev, [item.id]: { ...item.edit } }));
+    }
+  }
+
+  function cancelEdit(item: ShoppingItem) {
+    setEditing((prev) => {
+      const next = new Set(prev);
+      next.delete(item.id);
+      return next;
+    });
+  }
+
+  function setDraftValue(id: string, name: string, value: EditValue) {
+    setDraft((prev) => ({ ...prev, [id]: { ...prev[id], [name]: value } }));
+  }
+
+  const asStr = (v: EditValue): string =>
+    v == null ? "" : Array.isArray(v) ? v.join(", ") : String(v);
+  const sameValue = (a: EditValue, b: EditValue) =>
+    Array.isArray(a) || Array.isArray(b)
+      ? JSON.stringify(a ?? []) === JSON.stringify(b ?? [])
+      : (a ?? "") === (b ?? "");
+
+  // 編集内容から表示用フィールド(タイトル・価格・メモ・リンク・タグ)を再計算
+  function rebuildDisplay(item: ShoppingItem, d: Record<string, EditValue>) {
+    const title =
+      titleParts
+        .map((n) => asStr(d[n]).trim())
+        .filter(Boolean)
+        .join(" / ") || "(名称未設定)";
+
+    let price = item.price;
+    if (priceProp && priceProp in d) {
+      const v = d[priceProp];
+      price = v === "" || v == null ? null : Number(v);
+    }
+
+    let note = item.note;
+    if (noteProp && noteProp in d) note = asStr(d[noteProp]) || null;
+
+    const links = urlProps.length
+      ? urlProps
+          .map((n) => ({ label: n, url: asStr(d[n]) }))
+          .filter((l) => l.url)
+      : item.links;
+
+    const values = { ...item.values };
+    for (const f of fields) {
+      if (f.name in d) {
+        const dv = d[f.name];
+        values[f.name] = Array.isArray(dv) ? dv : dv ? [String(dv)] : [];
+      }
+    }
+    return { title, price, note, links, values };
+  }
+
+  async function saveEdit(item: ShoppingItem) {
+    const d = draft[item.id] ?? {};
+    const props: { name: string; type: string; value: any }[] = [];
+    for (const f of editableFields) {
+      if (!sameValue(d[f.name], item.edit[f.name])) {
+        props.push({ name: f.name, type: f.type, value: d[f.name] });
+      }
+    }
+    const disp = rebuildDisplay(item, d);
+    setItems((prev) =>
+      prev.map((it) => (it.id === item.id ? { ...it, ...disp, edit: { ...d } } : it))
+    );
+    cancelEdit(item);
+    if (props.length) await sendUpdate(item.id, props);
+  }
+
+  function renderEditInput(id: string, f: EditableField) {
+    const cur = draft[id]?.[f.name];
+    switch (f.type) {
+      case "number":
+        return (
+          <input
+            className="edit-input"
+            type="number"
+            inputMode="numeric"
+            value={cur == null ? "" : String(cur)}
+            onChange={(e) =>
+              setDraftValue(id, f.name, e.target.value === "" ? "" : Number(e.target.value))
+            }
+          />
+        );
+      case "date":
+        return (
+          <input
+            className="edit-input"
+            type="date"
+            value={asStr(cur)}
+            onChange={(e) => setDraftValue(id, f.name, e.target.value)}
+          />
+        );
+      case "select":
+      case "status":
+        return (
+          <select
+            className="edit-input"
+            value={asStr(cur)}
+            onChange={(e) => setDraftValue(id, f.name, e.target.value)}
+          >
+            <option value="">—</option>
+            {(f.options ?? []).map((o) => (
+              <option key={o.name} value={o.name}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        );
+      case "multi_select": {
+        const selected = Array.isArray(cur) ? cur : [];
+        return (
+          <div className="edit-chips">
+            {(f.options ?? []).map((o) => {
+              const on = selected.includes(o.name);
+              const c = colorFor(o.color);
+              return (
+                <button
+                  type="button"
+                  key={o.name}
+                  className={`chip ${on ? "on" : ""}`}
+                  style={on ? { background: c.bg, color: c.fg } : undefined}
+                  onClick={() =>
+                    setDraftValue(
+                      id,
+                      f.name,
+                      on ? selected.filter((x) => x !== o.name) : [...selected, o.name]
+                    )
+                  }
+                >
+                  {o.name}
+                </button>
+              );
+            })}
+          </div>
+        );
+      }
+      default: // title / rich_text / url
+        return (
+          <input
+            className="edit-input"
+            type="text"
+            value={asStr(cur)}
+            onChange={(e) => setDraftValue(id, f.name, e.target.value)}
+          />
+        );
+    }
   }
 
   async function toggleDetail(item: ShoppingItem) {
@@ -630,7 +813,35 @@ export default function Home() {
                         >
                           {expanded.has(item.id) ? "詳細を閉じる ▲" : "詳細 ▾"}
                         </button>
+                        {editableFields.length > 0 && !demo && (
+                          <button
+                            className="detail-toggle"
+                            onClick={() => toggleEdit(item)}
+                            aria-expanded={editing.has(item.id)}
+                          >
+                            {editing.has(item.id) ? "編集を閉じる ▲" : "✏️ 編集"}
+                          </button>
+                        )}
                       </div>
+
+                      {editing.has(item.id) && (
+                        <div className="edit">
+                          {editableFields.map((f) => (
+                            <div className="edit-row" key={f.name}>
+                              <label className="edit-label">{f.name}</label>
+                              {renderEditInput(item.id, f)}
+                            </div>
+                          ))}
+                          <div className="edit-actions">
+                            <button className="btn primary" onClick={() => saveEdit(item)}>
+                              保存
+                            </button>
+                            <button className="btn" onClick={() => cancelEdit(item)}>
+                              キャンセル
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       {expanded.has(item.id) && (
                         <div className="detail">

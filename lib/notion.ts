@@ -39,6 +39,26 @@ export interface GroupField {
   options: FieldOption[];
 }
 
+/** 編集パネルで直接編集できる列の型 */
+export type EditFieldType =
+  | "title"
+  | "rich_text"
+  | "number"
+  | "url"
+  | "select"
+  | "multi_select"
+  | "status"
+  | "date";
+
+/** 編集可能な値。型ごとに: text系=string / number=number|null / multi_select=string[] */
+export type EditValue = string | number | string[] | null;
+
+export interface EditableField {
+  name: string;
+  type: EditFieldType;
+  options?: FieldOption[]; // select / status / multi_select のみ
+}
+
 /** 正規化した買い物アイテム。UI はこの形だけを知っていればよい。 */
 export interface ShoppingItem {
   id: string;
@@ -52,6 +72,8 @@ export interface ShoppingItem {
   values: Record<string, string[]>;
   /** 上記の役割に当てはまらない列(作者・サークル名など) */
   extra: { name: string; value: string }[];
+  /** 編集用の生の値(列名 → 値)。編集パネルの初期値に使う。 */
+  edit: Record<string, EditValue>;
 }
 
 export interface ItemsResponse {
@@ -66,6 +88,11 @@ export interface ItemsResponse {
   statusCompleteValue: string | null; // 完了にするときに入れる値(例: 完了)
   statusCompleteValues: string[]; // Complete グループに属する全値
   statusTodoValue: string | null; // 未完了に戻すときの値(例: 未着手)
+  // 編集パネル用
+  editableFields: EditableField[];
+  titleParts: string[]; // タイトルを構成する列(この順に連結)
+  noteProp: string | null;
+  urlProps: string[];
   error?: string;
 }
 
@@ -144,6 +171,41 @@ function propToOptionNames(prop: any): string[] {
   }
 }
 
+// 編集パネル用に、各列の生の値を編集しやすい形へ
+function propToEditValue(prop: any, type: EditFieldType): EditValue {
+  switch (type) {
+    case "title":
+      return richTextToPlain(prop?.title);
+    case "rich_text":
+      return richTextToPlain(prop?.rich_text);
+    case "number":
+      return prop?.number ?? null;
+    case "url":
+      return prop?.url ?? "";
+    case "select":
+      return prop?.select?.name ?? "";
+    case "status":
+      return prop?.status?.name ?? "";
+    case "multi_select":
+      return (prop?.multi_select ?? []).map((s: any) => s.name);
+    case "date":
+      return prop?.date?.start ?? "";
+    default:
+      return "";
+  }
+}
+
+const EDITABLE_TYPES: EditFieldType[] = [
+  "title",
+  "rich_text",
+  "number",
+  "url",
+  "select",
+  "multi_select",
+  "status",
+  "date",
+];
+
 export interface Schema {
   titleName: string | null;
   /** タイトルに連結する追加列(タイトル型の後ろに順に連結) */
@@ -160,6 +222,7 @@ export interface Schema {
   statusCompleteValue: string | null;
   statusCompleteValues: string[];
   statusTodoValue: string | null;
+  editableFields: EditableField[];
 }
 
 /** databases.retrieve の properties から、各役割とグループ用フィールドを推定する。 */
@@ -225,6 +288,27 @@ export function buildSchema(properties: Record<string, any>): Schema {
       null;
   }
 
+  // 編集パネルで直接編集できる列(Notionの列順のまま)
+  const editableFields: EditableField[] = [];
+  for (const [name, prop] of entries) {
+    if (!EDITABLE_TYPES.includes(prop.type)) continue;
+    const rawOptions =
+      prop.type === "select"
+        ? prop.select?.options
+        : prop.type === "status"
+        ? prop.status?.options
+        : prop.type === "multi_select"
+        ? prop.multi_select?.options
+        : undefined;
+    editableFields.push({
+      name,
+      type: prop.type,
+      options: rawOptions
+        ? rawOptions.map((o: any) => ({ name: o.name, color: o.color ?? "default" }))
+        : undefined,
+    });
+  }
+
   // 完了チェックと連動させる status 列(Complete グループを持つもの)を特定
   let statusProp: string | null = null;
   let statusCompleteValue: string | null = null;
@@ -262,6 +346,7 @@ export function buildSchema(properties: Record<string, any>): Schema {
     statusCompleteValue,
     statusCompleteValues,
     statusTodoValue,
+    editableFields,
   };
 }
 
@@ -330,5 +415,11 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
     if (value) extra.push({ name, value });
   }
 
-  return { id: page.id, title, done, price, links, note, values, extra };
+  // 編集用の生の値(編集パネルの初期値)
+  const edit: Record<string, EditValue> = {};
+  for (const f of schema.editableFields) {
+    edit[f.name] = propToEditValue(props[f.name], f.type);
+  }
+
+  return { id: page.id, title, done, price, links, note, values, extra, edit };
 }

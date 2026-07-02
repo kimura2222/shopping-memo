@@ -1,7 +1,7 @@
 // ブラウザのローカルストレージを使ったオフライン対応。
 // - キャッシュ: 最後に取得したリストを保存 → オフラインでも閲覧できる
 // - 書き込みキュー: オフライン中の更新を溜めて、オンライン復帰時に同期する
-import type { ShoppingItem, GroupField } from "./notion";
+import type { ShoppingItem, GroupField, EditableField } from "./notion";
 
 const CACHE_KEY = "shoppingCache:v1";
 const QUEUE_KEY = "shoppingQueue:v1";
@@ -17,6 +17,10 @@ export interface CachedData {
   statusTodoValue: string | null;
   defaultGroup: string | null;
   demo: boolean;
+  editableFields: EditableField[];
+  titleParts: string[];
+  noteProp: string | null;
+  urlProps: string[];
 }
 
 export interface QueueOp {

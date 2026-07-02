@@ -46,6 +46,7 @@ function it(
     note,
     values: { カテゴリ: [cat], 優先度: [pri] },
     extra,
+    edit: {},
   };
 }
 

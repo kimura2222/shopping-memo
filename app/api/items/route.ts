@@ -25,6 +25,10 @@ export async function GET() {
       statusCompleteValue: null,
       statusCompleteValues: [],
       statusTodoValue: null,
+      editableFields: [],
+      titleParts: [],
+      noteProp: "メモ",
+      urlProps: [],
     };
     return NextResponse.json(res);
   }
@@ -62,6 +66,10 @@ export async function GET() {
       statusCompleteValue: schema.statusCompleteValue,
       statusCompleteValues: schema.statusCompleteValues,
       statusTodoValue: schema.statusTodoValue,
+      editableFields: schema.editableFields,
+      titleParts: [schema.titleName, ...schema.titleExtra].filter(Boolean) as string[],
+      noteProp: schema.noteName,
+      urlProps: schema.urlNames,
     };
     return NextResponse.json(res);
   } catch (err: any) {
@@ -76,6 +84,10 @@ export async function GET() {
       statusCompleteValue: null,
       statusCompleteValues: [],
       statusTodoValue: null,
+      editableFields: [],
+      titleParts: [],
+      noteProp: null,
+      urlProps: [],
       error:
         (typeof err?.body === "string" ? err.body : null) ??
         err?.message ??
@@ -124,13 +136,45 @@ export async function PATCH(request: Request) {
           { status: 400 }
         );
       }
+      const rt = (s: any) =>
+        s ? [{ text: { content: String(s) } }] : [];
       const properties: Record<string, any> = {};
       for (const p of props) {
-        if (p.type === "checkbox") properties[p.name] = { checkbox: !!p.value };
-        else if (p.type === "status")
-          properties[p.name] = p.value ? { status: { name: p.value } } : { status: null };
-        else if (p.type === "select")
-          properties[p.name] = p.value ? { select: { name: p.value } } : { select: null };
+        switch (p.type) {
+          case "checkbox":
+            properties[p.name] = { checkbox: !!p.value };
+            break;
+          case "status":
+            properties[p.name] = p.value ? { status: { name: p.value } } : { status: null };
+            break;
+          case "select":
+            properties[p.name] = p.value ? { select: { name: p.value } } : { select: null };
+            break;
+          case "title":
+            properties[p.name] = { title: rt(p.value) };
+            break;
+          case "rich_text":
+            properties[p.name] = { rich_text: rt(p.value) };
+            break;
+          case "number":
+            properties[p.name] = {
+              number: p.value === "" || p.value == null ? null : Number(p.value),
+            };
+            break;
+          case "url":
+            properties[p.name] = { url: p.value || null };
+            break;
+          case "multi_select":
+            properties[p.name] = {
+              multi_select: (Array.isArray(p.value) ? p.value : []).map((name: string) => ({
+                name,
+              })),
+            };
+            break;
+          case "date":
+            properties[p.name] = p.value ? { date: { start: p.value } } : { date: null };
+            break;
+        }
       }
       await notion.pages.update({ page_id: id, properties });
       return NextResponse.json({ ok: true });
