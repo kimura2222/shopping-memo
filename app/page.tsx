@@ -103,6 +103,9 @@ export default function Home() {
   const [hideDone, setHideDone] = useState(false);
   const [groupBy, setGroupBy] = useState<string>(NO_GROUP);
 
+  // テーマ(自動 / ライト / ダーク)
+  const [theme, setTheme] = useState<"system" | "light" | "dark">("system");
+
   // 折り畳み(詳細)の展開状態と、遅延取得した本文
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<
@@ -205,6 +208,29 @@ export default function Home() {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // テーマ: 起動時に保存値を復元
+  useEffect(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light" || saved === "dark" || saved === "system") setTheme(saved);
+  }, []);
+
+  // テーマ: 選択を <html data-theme> へ反映し保存。自動時は OS 設定に追従。
+  useEffect(() => {
+    const root = document.documentElement;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = theme === "dark" || (theme === "system" && mq.matches);
+      if (dark) root.setAttribute("data-theme", "dark");
+      else root.removeAttribute("data-theme");
+    };
+    apply();
+    localStorage.setItem("theme", theme);
+    if (theme === "system") {
+      mq.addEventListener("change", apply);
+      return () => mq.removeEventListener("change", apply);
+    }
+  }, [theme]);
 
   // オンライン/オフラインの変化に追従
   useEffect(() => {
@@ -470,6 +496,15 @@ export default function Home() {
           onClick={() => setHideDone((v) => !v)}
         >
           {hideDone ? "☑ 購入済みを隠す" : "購入済みを隠す"}
+        </button>
+        <button
+          className="btn"
+          onClick={() =>
+            setTheme((t) => (t === "system" ? "light" : t === "light" ? "dark" : "system"))
+          }
+          title="テーマ切替(自動 → ライト → ダーク)"
+        >
+          {theme === "system" ? "🌓 自動" : theme === "light" ? "☀️ ライト" : "🌙 ダーク"}
         </button>
         <button
           className="btn"

@@ -15,22 +15,27 @@
   --radius: 14px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1115;
-    --card: #181b21;
-    --border: #2a2f39;
-    --text: #e5e7eb;
-    --muted: #9ca3af;
-    --accent: #818cf8;
-    --accent-soft: #1e2130;
-    --done: #6b7280;
-    --done-bg: #23252b;
-    --done-border: #30333a;
-    --prio-bg: #3a2530;
-    --prio-border: #522f3d;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
-  }
+/* ダークテーマ。data-theme="dark" が付いた時に適用。
+   「自動」モードでは JS が OS 設定を見てこの属性を付け外しする。 */
+[data-theme="dark"] {
+  --bg: #0f1115;
+  --card: #181b21;
+  --border: #2a2f39;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --accent: #818cf8;
+  --accent-soft: #1e2130;
+  --done: #6b7280;
+  --done-bg: #23252b;
+  --done-border: #30333a;
+  --prio-bg: #3a2530;
+  --prio-border: #522f3d;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* テーマ切替時の色の変化を少しなめらかに */
+body {
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 * {

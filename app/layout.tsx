@@ -29,8 +29,19 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // 描画前にテーマを適用してチラつき(FOUC)を防ぐ
+  const themeScript = `
+try {
+  var t = localStorage.getItem('theme') || 'system';
+  var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+} catch (e) {}
+`;
   return (
     <html lang="ja">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body>
         {children}
         <RegisterSW />
