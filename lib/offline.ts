@@ -86,6 +86,18 @@ export function saveActiveDb(id: string) {
   safeSet(ACTIVEDB_KEY, id);
 }
 
+// 完了列が無いDB向けの「ローカル完了」(Notionには書かず、端末にだけ保存)
+const LOCALDONE_KEY = "shoppingLocalDone:v1";
+
+export function loadLocalDone(dbId: string): string[] {
+  const v = safeGet(`${LOCALDONE_KEY}:${dbId}`);
+  return Array.isArray(v) ? v : [];
+}
+
+export function saveLocalDone(dbId: string, ids: string[]) {
+  safeSet(`${LOCALDONE_KEY}:${dbId}`, ids);
+}
+
 export function loadQueue(): QueueOp[] {
   return safeGet(QUEUE_KEY) ?? [];
 }

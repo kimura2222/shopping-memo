@@ -15,11 +15,13 @@ import {
   loadCache,
   loadDatabases,
   loadLastSync,
+  loadLocalDone,
   loadQueue,
   saveActiveDb,
   saveCache,
   saveDatabases,
   saveLastSync,
+  saveLocalDone,
   saveQueue,
   type CachedData,
   type DbEntry,
@@ -124,6 +126,8 @@ export default function Home() {
   const [dbUrl, setDbUrl] = useState("");
   const [dbAddError, setDbAddError] = useState<string | null>(null);
   const [dbBusy, setDbBusy] = useState(false);
+  // 完了列が無いDB向けのローカル完了(端末にだけ保存、Notion非連動)
+  const [localDone, setLocalDone] = useState<Set<string>>(new Set());
 
   const [query, setQuery] = useState("");
   const [hideDone, setHideDone] = useState(false);
@@ -294,6 +298,7 @@ export default function Home() {
     activeDbRef.current = id;
     setActiveDb(id);
     saveActiveDb(id);
+    setLocalDone(new Set(loadLocalDone(id)));
     const c = loadCache(id);
     if (c) {
       applyData(c, true);
@@ -374,6 +379,7 @@ export default function Home() {
         applyData(cached, true);
         setLoading(false);
       }
+      setLocalDone(new Set(loadLocalDone(initialActive)));
     }
     setPending(loadQueue().length);
     setLastSync(loadLastSync());
@@ -501,6 +507,17 @@ export default function Home() {
     if (doneProp) props.push({ name: doneProp, type: "checkbox", value: next });
     if (linkStatus) props.push({ name: statusProp!, type: "status", value: nextStatus });
     await sendUpdate(item.id, props);
+  }
+
+  // 完了列が無いDB向け: 端末にだけ完了状態を保存(Notion非連動、グレーアウトのみ)
+  function toggleLocalDone(id: string) {
+    setLocalDone((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (activeDbRef.current) saveLocalDone(activeDbRef.current, [...next]);
+      return next;
+    });
   }
 
   // 状態タグの変更: 「状態」列なら完了チェックも自動で連動させる
@@ -727,10 +744,15 @@ export default function Home() {
     }
   }
 
+  // 完了列があるDBはNotionのdone、無いDBはローカル完了を「完了」とみなす
+  const canComplete = Boolean(doneProp || (statusProp && statusComplete));
+  const isDone = (it: ShoppingItem) =>
+    canComplete ? it.done : localDone.has(it.id);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = items.filter((it) => {
-      if (hideDone && it.done) return false;
+      if (hideDone && isDone(it)) return false;
       if (!q) return true;
       const hay = [
         it.title,
@@ -745,7 +767,8 @@ export default function Home() {
     // 基本並び順: タイトルを50音順(濁音・半濁音は後ろ)。昇順/降順で反転。
     const dir = sortDir === "asc" ? 1 : -1;
     return list.sort((a, b) => jpCompare(a.title, b.title) * dir);
-  }, [items, query, hideDone, sortDir]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, query, hideDone, sortDir, localDone, canComplete]);
 
   const grouped = useMemo(() => {
     if (groupBy === NO_GROUP) return [[UNSET, filtered]] as [string, ShoppingItem[]][];
@@ -769,9 +792,7 @@ export default function Home() {
   }, [filtered, groupBy, fieldMap]);
 
   const total = items.length;
-  const doneCount = items.filter((it) => it.done).length;
-  // 完了(チェック)の概念があるDBか。無ければチェックUIを出さない。
-  const canComplete = Boolean(doneProp || (statusProp && statusComplete));
+  const doneCount = items.filter((it) => isDone(it)).length;
   const remainingPrice = useMemo(
     () => items.filter((it) => !it.done).reduce((s, it) => s + (it.price ?? 0), 0),
     [items]
@@ -792,7 +813,7 @@ export default function Home() {
       <header className="header">
         <h1 className="title">🛒 買い物リスト</h1>
         <div className="stats">
-          {canComplete && total > 0 && (
+          {total > 0 && (
             <span className="progress">
               {doneCount} / {total} 完了
             </span>
@@ -926,14 +947,12 @@ export default function Home() {
         >
           {sortDir === "asc" ? "↑ 昇順" : "↓ 降順"}
         </button>
-        {canComplete && (
-          <button
-            className={`btn ${hideDone ? "active" : ""}`}
-            onClick={() => setHideDone((v) => !v)}
-          >
-            {hideDone ? "☑ 購入済みを隠す" : "購入済みを隠す"}
-          </button>
-        )}
+        <button
+          className={`btn ${hideDone ? "active" : ""}`}
+          onClick={() => setHideDone((v) => !v)}
+        >
+          {hideDone ? "☑ 購入済みを隠す" : "購入済みを隠す"}
+        </button>
         <button
           className="btn"
           onClick={() =>
@@ -987,22 +1006,22 @@ export default function Home() {
                   <li
                     key={item.id}
                     className={`item ${
-                      item.done
+                      isDone(item)
                         ? "done"
                         : item.values[PRIORITY_FIELD]?.includes(PRIORITY_HIGH)
                         ? "prio-high"
                         : ""
                     } ${item.flagged ? "flagged" : ""}`}
                   >
-                    {canComplete && (
-                      <input
-                        className="checkbox"
-                        type="checkbox"
-                        checked={item.done}
-                        onChange={() => toggleDone(item)}
-                        aria-label={`${item.title} を購入済みにする`}
-                      />
-                    )}
+                    <input
+                      className="checkbox"
+                      type="checkbox"
+                      checked={isDone(item)}
+                      onChange={() =>
+                        canComplete ? toggleDone(item) : toggleLocalDone(item.id)
+                      }
+                      aria-label={`${item.title} を完了にする`}
+                    />
                     <div className="item-body">
                       <div className="item-row">
                         <span className="item-title">
