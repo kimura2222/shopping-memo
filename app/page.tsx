@@ -1089,14 +1089,18 @@ export default function Home() {
                         {item.extra.map((ex) => {
                           const kc = keyColor(ex.name);
                           return (
-                            <span key={ex.name} className="extra">
+                            <span
+                              key={ex.name}
+                              className="extra"
+                              style={{ borderColor: kc.bg }}
+                            >
                               <span
                                 className="extra-key"
                                 style={{ background: kc.bg, color: kc.fg }}
                               >
                                 {ex.name}
                               </span>
-                              {ex.value}
+                              <span className="extra-val">{ex.value}</span>
                             </span>
                           );
                         })}
