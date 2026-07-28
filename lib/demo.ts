@@ -44,6 +44,7 @@ function it(
     price,
     links: [],
     note,
+    address: null,
     values: { カテゴリ: [cat], 優先度: [pri] },
     extra,
     edit: {},

@@ -1093,6 +1093,10 @@ export default function Home() {
                         </button>
                       </div>
 
+                      {item.address && (
+                        <div className="item-address">{item.address}</div>
+                      )}
+
                       {expanded.has(item.id) && (
                         <div className="detail">
                           {item.links.length > 0 && (

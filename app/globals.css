@@ -469,6 +469,18 @@ body {
   font-size: 12px;
 }
 
+/* 住所は独立した1行で読みやすく */
+.item-address {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-line;
+  word-break: break-word;
+}
+
 .detail-toggle {
   border: none;
   background: transparent;

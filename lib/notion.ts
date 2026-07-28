@@ -84,6 +84,8 @@ export interface ShoppingItem {
   /** URL 型の列(サンプル・Twitter 等)。詳細アコーディオン内に表示する */
   links: { label: string; url: string }[];
   note: string | null;
+  /** place型の住所テキスト(読みやすく独立行で表示)。地図はlinksに入れる。 */
+  address: string | null;
   /** 列名 → 選択中のオプション名(multi_select は複数) */
   values: Record<string, string[]>;
   /** 上記の役割に当てはまらない列(作者・サークル名など) */
@@ -123,6 +125,7 @@ const DONE_NAMES = ["完了", "購入済", "購入済み", "済", "done", "check
 const CONDITIONAL_NAMES = ["条件付き", "条件付", "要認証", "認証", "conditional", "flag"];
 const PRICE_NAMES = ["値段", "価格", "金額", "料金", "price", "cost"];
 const NOTE_NAMES = ["メモ", "備考", "概要", "note", "notes", "memo", "comment"];
+const ADDRESS_NAMES = ["住所", "所在地", "address", "addr", "location"];
 // タイトルに連結する列(この順に「 / 」で連結)。タイトル型の列を先頭に置く。
 const TITLE_PART_NAMES = ["作者", "サークル名", "名前", "品名", "name", "author", "circle"];
 const TITLE_SEPARATOR = " / ";
@@ -253,6 +256,7 @@ export interface Schema {
   priceName: string | null;
   urlNames: string[];
   noteName: string | null;
+  addressName: string | null;
   fields: GroupField[];
   defaultGroup: string | null;
   statusProp: string | null;
@@ -277,11 +281,12 @@ export function buildSchema(properties: Record<string, any>): Schema {
     pickByName(entries, PRICE_NAMES, "number") ?? firstOfType(entries, "number");
   const urlNames = entries.filter(([, p]) => p.type === "url").map(([n]) => n);
   const noteEntry = pickByName(entries, NOTE_NAMES, "rich_text");
+  const addressEntry = pickByName(entries, ADDRESS_NAMES, "rich_text");
 
   const richTexts = entries
     .filter(([, p]) => p.type === "rich_text")
     .map(([n]) => n)
-    .filter((n) => n !== noteEntry?.[0]);
+    .filter((n) => n !== noteEntry?.[0] && n !== addressEntry?.[0]);
 
   // タイトルに連結する追加列(候補名の順、実在するものだけ)
   const titleExtra = TITLE_PART_NAMES.map((n) =>
@@ -382,6 +387,7 @@ export function buildSchema(properties: Record<string, any>): Schema {
     priceName: priceEntry?.[0] ?? null,
     urlNames,
     noteName: noteEntry?.[0] ?? null,
+    addressName: addressEntry?.[0] ?? null,
     fields,
     defaultGroup,
     statusProp,
@@ -427,6 +433,7 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
       schema.conditionalName,
       schema.priceName,
       schema.noteName,
+      schema.addressName,
       usedFallback,
     ].filter(Boolean) as string[]
   );
@@ -447,13 +454,19 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
     const u = propToString(props[name]);
     if (u) links.push({ label: name, url: u });
   }
-  // place(場所)型は地図リンクとして追加
+  // place(場所)型は地図リンク(列名そのままのラベル)。埋め込み住所は住所列が無い時のフォールバック。
+  const placeAddrParts: string[] = [];
   for (const [name, prop] of Object.entries(props)) {
     if (prop?.type === "place") {
       const mapUrl = placeToMapUrl(prop.place);
-      if (mapUrl) links.push({ label: `${name}(地図)`, url: mapUrl });
+      if (mapUrl) links.push({ label: name, url: mapUrl });
+      const addr = prop.place?.address ?? prop.place?.name ?? "";
+      if (addr) placeAddrParts.push(addr);
     }
   }
+  // 住所: 専用テキスト列を優先、無ければ place の埋め込み住所
+  const addressText = schema.addressName ? propToString(props[schema.addressName]) : "";
+  const address = addressText || placeAddrParts.join("\n") || null;
   const note = schema.noteName ? propToString(props[schema.noteName]) || null : null;
 
   const values: Record<string, string[]> = {};
@@ -464,6 +477,7 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
   const extra: { name: string; value: string }[] = [];
   for (const [name, prop] of Object.entries(props)) {
     if (used.has(name) || fieldNames.has(name)) continue;
+    if (prop?.type === "place") continue; // 住所は address として別扱い
     const value = propToString(prop);
     if (value) extra.push({ name, value });
   }
@@ -474,5 +488,5 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
     edit[f.name] = propToEditValue(props[f.name], f.type);
   }
 
-  return { id: page.id, title, done, price, links, note, values, extra, edit, flagged };
+  return { id: page.id, title, done, price, links, note, address, values, extra, edit, flagged };
 }
