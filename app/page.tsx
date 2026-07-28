@@ -470,6 +470,14 @@ export default function Home() {
     return colorFor(opt?.color);
   }
 
+  // 補足ラベル(駅名・種類など)を名前ごとに色分け(安定したハッシュで割当)
+  const KEY_PALETTE = ["blue", "green", "orange", "purple", "pink", "brown", "yellow", "red"];
+  function keyColor(name: string) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return colorFor(KEY_PALETTE[h % KEY_PALETTE.length]);
+  }
+
   // 更新はまずキューに積んでから同期を試みる。
   // オフラインなら溜めておき、オンライン復帰時に自動同期(画面は楽観的に更新済み)。
   async function sendUpdate(
@@ -1078,11 +1086,20 @@ export default function Home() {
                           )}
 
                         {item.note && <span className="note">{item.note}</span>}
-                        {item.extra.map((ex) => (
-                          <span key={ex.name} className="extra">
-                            {ex.name}: {ex.value}
-                          </span>
-                        ))}
+                        {item.extra.map((ex) => {
+                          const kc = keyColor(ex.name);
+                          return (
+                            <span key={ex.name} className="extra">
+                              <span
+                                className="extra-key"
+                                style={{ background: kc.bg, color: kc.fg }}
+                              >
+                                {ex.name}
+                              </span>
+                              {ex.value}
+                            </span>
+                          );
+                        })}
 
                         <button
                           className="detail-toggle"
