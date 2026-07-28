@@ -770,6 +770,8 @@ export default function Home() {
 
   const total = items.length;
   const doneCount = items.filter((it) => it.done).length;
+  // 完了(チェック)の概念があるDBか。無ければチェックUIを出さない。
+  const canComplete = Boolean(doneProp || (statusProp && statusComplete));
   const remainingPrice = useMemo(
     () => items.filter((it) => !it.done).reduce((s, it) => s + (it.price ?? 0), 0),
     [items]
@@ -790,7 +792,7 @@ export default function Home() {
       <header className="header">
         <h1 className="title">🛒 買い物リスト</h1>
         <div className="stats">
-          {total > 0 && (
+          {canComplete && total > 0 && (
             <span className="progress">
               {doneCount} / {total} 完了
             </span>
@@ -924,12 +926,14 @@ export default function Home() {
         >
           {sortDir === "asc" ? "↑ 昇順" : "↓ 降順"}
         </button>
-        <button
-          className={`btn ${hideDone ? "active" : ""}`}
-          onClick={() => setHideDone((v) => !v)}
-        >
-          {hideDone ? "☑ 購入済みを隠す" : "購入済みを隠す"}
-        </button>
+        {canComplete && (
+          <button
+            className={`btn ${hideDone ? "active" : ""}`}
+            onClick={() => setHideDone((v) => !v)}
+          >
+            {hideDone ? "☑ 購入済みを隠す" : "購入済みを隠す"}
+          </button>
+        )}
         <button
           className="btn"
           onClick={() =>
@@ -990,13 +994,15 @@ export default function Home() {
                         : ""
                     } ${item.flagged ? "flagged" : ""}`}
                   >
-                    <input
-                      className="checkbox"
-                      type="checkbox"
-                      checked={item.done}
-                      onChange={() => toggleDone(item)}
-                      aria-label={`${item.title} を購入済みにする`}
-                    />
+                    {canComplete && (
+                      <input
+                        className="checkbox"
+                        type="checkbox"
+                        checked={item.done}
+                        onChange={() => toggleDone(item)}
+                        aria-label={`${item.title} を購入済みにする`}
+                      />
+                    )}
                     <div className="item-body">
                       <div className="item-row">
                         <span className="item-title">

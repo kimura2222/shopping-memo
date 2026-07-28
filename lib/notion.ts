@@ -176,9 +176,22 @@ function propToString(prop: any): string {
       return prop.date?.start ?? "";
     case "people":
       return (prop.people ?? []).map((p: any) => p.name ?? "").join(", ");
+    case "place":
+      return prop.place?.address ?? prop.place?.name ?? "";
     default:
       return "";
   }
+}
+
+// place(場所)型 → Googleマップで開けるURL
+function placeToMapUrl(place: any): string | null {
+  if (!place) return null;
+  const q =
+    place.lat != null && place.lon != null
+      ? `${place.lat},${place.lon}`
+      : place.address ?? place.name ?? "";
+  if (!q) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
 function propToOptionNames(prop: any): string[] {
@@ -433,6 +446,13 @@ export function normalizePage(page: any, schema: Schema): ShoppingItem {
   for (const name of schema.urlNames) {
     const u = propToString(props[name]);
     if (u) links.push({ label: name, url: u });
+  }
+  // place(場所)型は地図リンクとして追加
+  for (const [name, prop] of Object.entries(props)) {
+    if (prop?.type === "place") {
+      const mapUrl = placeToMapUrl(prop.place);
+      if (mapUrl) links.push({ label: `${name}(地図)`, url: mapUrl });
+    }
   }
   const note = schema.noteName ? propToString(props[schema.noteName]) || null : null;
 
