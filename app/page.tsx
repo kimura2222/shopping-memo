@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   EditableField,
   EditValue,
@@ -11,13 +11,18 @@ import type {
 import { colorFor } from "@/lib/colors";
 import {
   enqueue,
+  loadActiveDb,
   loadCache,
+  loadDatabases,
   loadLastSync,
   loadQueue,
+  saveActiveDb,
   saveCache,
+  saveDatabases,
   saveLastSync,
   saveQueue,
   type CachedData,
+  type DbEntry,
   type QueueOp,
 } from "@/lib/offline";
 
@@ -110,6 +115,15 @@ export default function Home() {
   const [pending, setPending] = useState(0);
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  // 複数データベース
+  const [databases, setDatabases] = useState<DbEntry[]>([]);
+  const [activeDb, setActiveDb] = useState<string | null>(null);
+  const activeDbRef = useRef<string | null>(null); // 最新のactiveDbを参照(イベントハンドラの陳腐化対策)
+  const [showAddDb, setShowAddDb] = useState(false);
+  const [dbUrl, setDbUrl] = useState("");
+  const [dbAddError, setDbAddError] = useState<string | null>(null);
+  const [dbBusy, setDbBusy] = useState(false);
 
   const [query, setQuery] = useState("");
   const [hideDone, setHideDone] = useState(false);
@@ -219,8 +233,23 @@ export default function Home() {
     return fullySynced;
   }
 
-  // オンライン時: キュー同期 → 最新取得。オフライン時: キャッシュのまま。
-  async function refresh() {
+  // 取得したデータベースを一覧に登録(既定DBの自動登録や新規追加時)
+  function registerDb(id: string, title: string) {
+    setDatabases((prev) => {
+      const found = prev.find((d) => d.id === id);
+      let next: DbEntry[];
+      if (found) {
+        next = prev.map((d) => (d.id === id ? { ...d, title } : d));
+      } else {
+        next = [...prev, { id, title }];
+      }
+      saveDatabases(next);
+      return next;
+    });
+  }
+
+  // オンライン時: キュー同期 → 選択中DBを取得。オフライン時: キャッシュのまま。
+  async function refresh(dbId: string | null = activeDbRef.current) {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       setOnline(false);
       setLoading(false);
@@ -233,7 +262,8 @@ export default function Home() {
       return; // 同期しきれていないので取得はスキップ(ローカルを優先)
     }
     try {
-      const res = await fetch("/api/items", { cache: "no-store" });
+      const url = dbId ? `/api/items?db=${encodeURIComponent(dbId)}` : "/api/items";
+      const res = await fetch(url, { cache: "no-store" });
       const data: ItemsResponse = await res.json();
       if (data.error && !(data.items && data.items.length)) {
         setError(data.error);
@@ -241,6 +271,15 @@ export default function Home() {
         applyData(data, false);
         setError(data.error ?? null);
         markSynced();
+        // 取得できたDBを一覧に登録し、未選択なら選択する
+        if (data.dbId) {
+          registerDb(data.dbId, data.dbTitle ?? "データベース");
+          if (!activeDbRef.current) {
+            activeDbRef.current = data.dbId;
+            setActiveDb(data.dbId);
+            saveActiveDb(data.dbId);
+          }
+        }
       }
     } catch {
       setOnline(false);
@@ -249,17 +288,97 @@ export default function Home() {
     }
   }
 
-  // 初回: キャッシュを即描画 → オンラインなら最新化
-  useEffect(() => {
-    const cached = loadCache();
-    if (cached) {
-      applyData(cached, true);
+  // データベースを切り替える
+  function selectDb(id: string) {
+    if (!id || id === activeDbRef.current) return;
+    activeDbRef.current = id;
+    setActiveDb(id);
+    saveActiveDb(id);
+    const c = loadCache(id);
+    if (c) {
+      applyData(c, true);
       setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    refresh(id);
+  }
+
+  // URLからデータベースを登録
+  async function addDatabaseByUrl() {
+    const url = dbUrl.trim();
+    if (!url) return;
+    setDbBusy(true);
+    setDbAddError(null);
+    try {
+      const res = await fetch("/api/db/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setDbAddError(data.error ?? "登録に失敗しました。");
+        return;
+      }
+      registerDb(data.id, data.title);
+      setDbUrl("");
+      setShowAddDb(false);
+      selectDb(data.id);
+    } catch {
+      setDbAddError("通信に失敗しました。オンラインか確認してください。");
+    } finally {
+      setDbBusy(false);
+    }
+  }
+
+  // 登録済みデータベースを一覧から削除
+  function removeDatabase(id: string) {
+    setDatabases((prev) => {
+      const next = prev.filter((d) => d.id !== id);
+      saveDatabases(next);
+      if (activeDbRef.current === id) {
+        const fallback = next[0]?.id ?? null;
+        activeDbRef.current = fallback;
+        setActiveDb(fallback);
+        if (fallback) {
+          saveActiveDb(fallback);
+          const c = loadCache(fallback);
+          if (c) applyData(c, true);
+          refresh(fallback);
+        }
+      }
+      return next;
+    });
+  }
+
+  // activeDb の最新値を ref に同期(イベントハンドラの陳腐化対策)
+  useEffect(() => {
+    activeDbRef.current = activeDb;
+  }, [activeDb]);
+
+  // 初回: 登録済みDBと選択を復元 → キャッシュを即描画 → オンラインなら最新化
+  useEffect(() => {
+    const dbs = loadDatabases();
+    const savedActive = loadActiveDb();
+    const initialActive =
+      savedActive && dbs.some((d) => d.id === savedActive)
+        ? savedActive
+        : dbs[0]?.id ?? null;
+    setDatabases(dbs);
+    setActiveDb(initialActive);
+    activeDbRef.current = initialActive;
+    if (initialActive) {
+      const cached = loadCache(initialActive);
+      if (cached) {
+        applyData(cached, true);
+        setLoading(false);
+      }
     }
     setPending(loadQueue().length);
     setLastSync(loadLastSync());
     if (typeof navigator !== "undefined") setOnline(navigator.onLine);
-    refresh();
+    refresh(initialActive);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -311,10 +430,10 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 画面状態が変わるたびにキャッシュへ保存(オフライン閲覧用)
+  // 画面状態が変わるたびに、選択中DBのキャッシュへ保存(オフライン閲覧用)
   useEffect(() => {
-    if (loading) return;
-    saveCache({
+    if (loading || !activeDb) return;
+    saveCache(activeDb, {
       items,
       fields,
       doneProp,
@@ -331,7 +450,7 @@ export default function Home() {
       urlProps,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, fields, groupBy, doneProp, priceProp, statusProp, statusComplete, statusTodo, demo, loading, editableFields, titleParts, noteProp, urlProps]);
+  }, [items, fields, groupBy, doneProp, priceProp, statusProp, statusComplete, statusTodo, demo, loading, editableFields, titleParts, noteProp, urlProps, activeDb]);
 
   const fieldMap = useMemo(() => {
     const m = new Map<string, GroupField>();
@@ -695,6 +814,67 @@ export default function Home() {
         </div>
       </header>
 
+      {/* データベース切替バー */}
+      {!demo && (
+        <div className="db-bar">
+          {databases.length > 0 && (
+            <select
+              className="db-select"
+              value={activeDb ?? ""}
+              onChange={(e) => selectDb(e.target.value)}
+              title="表示するデータベース"
+            >
+              {databases.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.title}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            className="btn"
+            onClick={() => {
+              setShowAddDb((v) => !v);
+              setDbAddError(null);
+            }}
+          >
+            {showAddDb ? "×" : "＋ DB追加"}
+          </button>
+          {activeDb && databases.length > 1 && (
+            <button
+              className="btn"
+              onClick={() => {
+                if (confirm("このデータベースを一覧から削除しますか?(Notion側は消えません)"))
+                  removeDatabase(activeDb);
+              }}
+              title="選択中のDBを一覧から外す"
+            >
+              削除
+            </button>
+          )}
+        </div>
+      )}
+
+      {showAddDb && !demo && (
+        <div className="db-add">
+          <input
+            className="search"
+            type="url"
+            placeholder="NotionデータベースのURLを貼り付け"
+            value={dbUrl}
+            onChange={(e) => setDbUrl(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addDatabaseByUrl()}
+          />
+          <button className="btn primary" onClick={addDatabaseByUrl} disabled={dbBusy}>
+            {dbBusy ? "確認中…" : "登録"}
+          </button>
+          {dbAddError && <div className="db-add-error">{dbAddError}</div>}
+          <div className="db-add-hint">
+            ※ 対象DBを同じインテグレーションに「接続」しておいてください。リンクドDBのURLは不可。
+          </div>
+        </div>
+      )}
+
       {demo && (
         <div className="banner">
           <strong>デモモードで表示中です。</strong> 自分の Notion とつなぐには{" "}
@@ -761,7 +941,7 @@ export default function Home() {
         </button>
         <button
           className="btn"
-          onClick={refresh}
+          onClick={() => refresh()}
           title={pending > 0 ? "同期して再読み込み" : "再読み込み"}
         >
           {pending > 0 ? `↻ 同期(${pending})` : "↻"}

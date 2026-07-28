@@ -6,6 +6,8 @@ import type { ShoppingItem, GroupField, EditableField } from "./notion";
 const CACHE_KEY = "shoppingCache:v1";
 const QUEUE_KEY = "shoppingQueue:v1";
 const LASTSYNC_KEY = "shoppingLastSync:v1";
+const DBLIST_KEY = "shoppingDatabases:v1";
+const ACTIVEDB_KEY = "shoppingActiveDb:v1";
 
 export interface CachedData {
   items: ShoppingItem[];
@@ -50,12 +52,38 @@ function safeSet(key: string, value: any) {
   }
 }
 
-export function loadCache(): CachedData | null {
-  return safeGet(CACHE_KEY);
+// キャッシュはデータベースごとに分ける(切替時に混ざらないように)
+export function loadCache(dbId: string): CachedData | null {
+  return safeGet(`${CACHE_KEY}:${dbId}`);
 }
 
-export function saveCache(data: CachedData) {
-  safeSet(CACHE_KEY, data);
+export function saveCache(dbId: string, data: CachedData) {
+  safeSet(`${CACHE_KEY}:${dbId}`, data);
+}
+
+// 登録済みデータベースの一覧と選択中ID
+export interface DbEntry {
+  id: string;
+  title: string;
+  url?: string;
+}
+
+export function loadDatabases(): DbEntry[] {
+  const v = safeGet(DBLIST_KEY);
+  return Array.isArray(v) ? v : [];
+}
+
+export function saveDatabases(list: DbEntry[]) {
+  safeSet(DBLIST_KEY, list);
+}
+
+export function loadActiveDb(): string | null {
+  const v = safeGet(ACTIVEDB_KEY);
+  return typeof v === "string" ? v : null;
+}
+
+export function saveActiveDb(id: string) {
+  safeSet(ACTIVEDB_KEY, id);
 }
 
 export function loadQueue(): QueueOp[] {

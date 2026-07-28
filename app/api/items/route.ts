@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import {
   buildSchema,
   databaseId,
+  databaseTitle,
   getNotion,
-  isConfigured,
+  hasToken,
+  normalizeDatabaseId,
   normalizePage,
   type ItemsResponse,
 } from "@/lib/notion";
@@ -11,12 +13,17 @@ import { demoFields, demoItems } from "@/lib/demo";
 
 export const dynamic = "force-dynamic"; // 常に最新を取得
 
-// 一覧取得
-export async function GET() {
-  if (!isConfigured) {
+// 一覧取得。?db=<id or url> で対象データベースを指定(無ければ環境変数の既定)。
+export async function GET(request: Request) {
+  const dbParam = new URL(request.url).searchParams.get("db");
+  const effectiveDb = (dbParam ? normalizeDatabaseId(dbParam) : null) || databaseId;
+
+  if (!hasToken || !effectiveDb) {
     const res: ItemsResponse = {
       items: demoItems,
       demo: true,
+      dbId: null,
+      dbTitle: null,
       doneProp: null,
       priceProp: "値段",
       fields: demoFields,
@@ -37,7 +44,7 @@ export async function GET() {
     const notion = getNotion();
 
     // 1) スキーマ(列の型・選択肢・色)を取得
-    const db: any = await notion.databases.retrieve({ database_id: databaseId! });
+    const db: any = await notion.databases.retrieve({ database_id: effectiveDb });
     const schema = buildSchema(db.properties);
 
     // 2) 全行を取得(ページネーション対応)
@@ -45,7 +52,7 @@ export async function GET() {
     let cursor: string | undefined = undefined;
     do {
       const resp: any = await notion.databases.query({
-        database_id: databaseId!,
+        database_id: effectiveDb,
         start_cursor: cursor,
         page_size: 100,
       });
@@ -58,6 +65,8 @@ export async function GET() {
     const res: ItemsResponse = {
       items,
       demo: false,
+      dbId: effectiveDb,
+      dbTitle: databaseTitle(db),
       doneProp: schema.doneName,
       priceProp: schema.priceName,
       fields: schema.fields,
@@ -76,6 +85,8 @@ export async function GET() {
     const res: ItemsResponse = {
       items: [],
       demo: false,
+      dbId: effectiveDb,
+      dbTitle: null,
       doneProp: null,
       priceProp: null,
       fields: [],
@@ -101,7 +112,7 @@ export async function GET() {
 export async function PATCH(request: Request) {
   const body = await request.json().catch(() => ({}));
 
-  if (!isConfigured) {
+  if (!hasToken) {
     // デモモードでは書き込まない(クライアント側で状態を保持)
     return NextResponse.json({ ok: true, demo: true });
   }

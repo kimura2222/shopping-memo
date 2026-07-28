@@ -16,6 +16,22 @@ export function normalizeDatabaseId(id?: string): string | undefined {
 
 export const databaseId = normalizeDatabaseId(rawDatabaseId);
 export const isConfigured = Boolean(notionToken && databaseId);
+export const hasToken = Boolean(notionToken);
+
+// NotionのURLからデータベースIDを取り出す。
+// 末尾32桁の16進がID(ビュー v= はクエリなので除外)。ハイフン有無どちらも可。
+export function extractDatabaseIdFromUrl(url: string): string | undefined {
+  if (!url) return undefined;
+  const path = url.split(/[?#]/)[0];
+  const hex = path.replace(/[^0-9a-fA-F]/g, "");
+  if (hex.length < 32) return undefined;
+  return normalizeDatabaseId(hex.slice(-32).toLowerCase());
+}
+
+// databases.retrieve の結果からタイトル文字列を得る
+export function databaseTitle(db: any): string {
+  return (db?.title ?? []).map((t: any) => t.plain_text ?? "").join("") || "データベース";
+}
 
 let _client: Client | null = null;
 export function getNotion(): Client {
@@ -81,6 +97,9 @@ export interface ShoppingItem {
 export interface ItemsResponse {
   items: ShoppingItem[];
   demo: boolean;
+  // 現在表示しているデータベース(切替UI用)
+  dbId: string | null;
+  dbTitle: string | null;
   doneProp: string | null;
   priceProp: string | null;
   fields: GroupField[];
