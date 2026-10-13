@@ -30,6 +30,22 @@ import {
 
 const MAX_SYNC_TRIES = 5;
 
+// 会場の混雑回線で応答待ちのまま固まらないよう、通信に上限時間を設ける
+const SYNC_TIMEOUT_MS = 10_000;
+const FETCH_TIMEOUT_MS = 20_000;
+// Notion画像の署名URLは約1時間で失効するので、それより前に取り直す
+const DETAIL_TTL_MS = 50 * 60 * 1000;
+
+async function fetchWithTimeout(input: string, init: RequestInit = {}, ms = FETCH_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const NO_GROUP = "__none__";
 const UNSET = "(未設定)";
 
@@ -42,6 +58,8 @@ interface Detail {
   images: { url: string; caption: string }[];
   texts: string[];
   error?: string;
+  /** 取得時刻(画像URLの失効前に取り直す判定用) */
+  fetchedAt?: number;
 }
 
 // 50音の並び順。清音(あ〜ん)を先に、濁音・半濁音はその後ろにまとめる。
@@ -186,7 +204,16 @@ export default function Home() {
   // 溜まった更新をNotionへ順次同期。
   // - ネットワーク不通: そのop以降を保持して中断(オンライン復帰時に再開)
   // - サーバー拒否(不正な値・削除済み等): 再試行回数を数え、上限で破棄して"詰まり"を防ぐ
-  async function flushQueue(): Promise<boolean> {
+  // 同時に2本走ると同じopを二重送信したり、到着順が入れ替わったりするため、
+  // 呼び出しは前の同期が終わってから順に実行する(直列化)。
+  const flushChainRef = useRef<Promise<boolean>>(Promise.resolve(true));
+  function flushQueue(): Promise<boolean> {
+    const run = flushChainRef.current.then(flushQueueOnce, flushQueueOnce);
+    flushChainRef.current = run;
+    return run;
+  }
+
+  async function flushQueueOnce(): Promise<boolean> {
     const q = loadQueue();
     if (q.length === 0) {
       setPending(0);
@@ -207,25 +234,32 @@ export default function Home() {
         continue;
       }
       try {
-        const res = await fetch("/api/items", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "update", id: op.id, props: op.props }),
-        });
+        const res = await fetchWithTimeout(
+          "/api/items",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "update", id: op.id, props: op.props }),
+          },
+          SYNC_TIMEOUT_MS
+        );
         if (res.ok) continue; // 成功 → キューから除去
         // サーバーは応答したが失敗 → 再試行回数を加算、上限で破棄
         const tries = (op.tries ?? 0) + 1;
         if (tries >= MAX_SYNC_TRIES) dropped++;
         else remaining.push({ ...op, tries });
       } catch {
-        networkFailed = true; // ネットワーク不通 → 保持して以降中断
+        networkFailed = true; // ネットワーク不通・タイムアウト → 保持して以降中断
         remaining.push(op);
       }
     }
-    saveQueue(remaining);
-    setPending(remaining.length);
+    // 送信中に積まれた新しいopは末尾にあるので、それを消さずに残す
+    const added = loadQueue().slice(q.length);
+    const next = [...remaining, ...added];
+    saveQueue(next);
+    setPending(next.length);
     if (networkFailed) setOnline(false);
-    const fullySynced = remaining.length === 0 && !networkFailed;
+    const fullySynced = next.length === 0 && !networkFailed;
     if (dropped > 0) {
       setSyncError(
         `${dropped}件の更新をNotionに反映できませんでした(スキップ)。該当項目を確認してください。`
@@ -265,10 +299,14 @@ export default function Home() {
       setLoading(false);
       return; // 同期しきれていないので取得はスキップ(ローカルを優先)
     }
+    // 取得中に別のDBへ切り替えられたら、この結果は捨てる
+    // (反映すると別DBの中身が表示され、さらにそのDBのキャッシュとして保存されてしまう)
+    const isStale = () => dbId !== activeDbRef.current;
     try {
       const url = dbId ? `/api/items?db=${encodeURIComponent(dbId)}` : "/api/items";
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetchWithTimeout(url, { cache: "no-store" });
       const data: ItemsResponse = await res.json();
+      if (isStale()) return;
       if (data.error && !(data.items && data.items.length)) {
         setError(data.error);
       } else {
@@ -286,9 +324,9 @@ export default function Home() {
         }
       }
     } catch {
-      setOnline(false);
+      if (!isStale()) setOnline(false);
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   }
 
@@ -304,6 +342,8 @@ export default function Home() {
       applyData(c, true);
       setLoading(false);
     } else {
+      // 前のDBの中身が残ったままだと、それがこのDBのキャッシュとして保存されうるので空にする
+      applyData({}, true);
       setLoading(true);
     }
     refresh(id);
@@ -338,23 +378,20 @@ export default function Home() {
   }
 
   // 登録済みデータベースを一覧から削除
+  // (state更新関数の中で副作用を起こすと開発時に二重実行されるので、外で行う)
   function removeDatabase(id: string) {
-    setDatabases((prev) => {
-      const next = prev.filter((d) => d.id !== id);
-      saveDatabases(next);
-      if (activeDbRef.current === id) {
-        const fallback = next[0]?.id ?? null;
-        activeDbRef.current = fallback;
-        setActiveDb(fallback);
-        if (fallback) {
-          saveActiveDb(fallback);
-          const c = loadCache(fallback);
-          if (c) applyData(c, true);
-          refresh(fallback);
-        }
-      }
-      return next;
-    });
+    const next = databases.filter((d) => d.id !== id);
+    setDatabases(next);
+    saveDatabases(next);
+    if (activeDbRef.current !== id) return;
+    const fallback = next[0]?.id ?? null;
+    if (fallback) {
+      activeDbRef.current = null; // selectDb の「同じDBなら何もしない」を回避
+      selectDb(fallback);
+    } else {
+      activeDbRef.current = null;
+      setActiveDb(null);
+    }
   }
 
   // activeDb の最新値を ref に同期(イベントハンドラの陳腐化対策)
@@ -720,14 +757,19 @@ export default function Home() {
       else next.add(item.id);
       return next;
     });
-    // 開くとき&未取得なら本文を遅延ロード(署名URLは都度取得)
-    if (!expanded.has(item.id) && !details[item.id]) {
+    // 開くとき、未取得・前回失敗・画像URLの失効が近い場合は本文を(再)取得
+    const cur = details[item.id];
+    const needsFetch =
+      !cur ||
+      (!cur.loading &&
+        (Boolean(cur.error) || Date.now() - (cur.fetchedAt ?? 0) > DETAIL_TTL_MS));
+    if (!expanded.has(item.id) && needsFetch) {
       setDetails((prev) => ({
         ...prev,
         [item.id]: { loading: true, images: [], texts: [] },
       }));
       try {
-        const res = await fetch(`/api/items/${item.id}`, { cache: "no-store" });
+        const res = await fetchWithTimeout(`/api/items/${item.id}`, { cache: "no-store" });
         const data = await res.json();
         setDetails((prev) => ({
           ...prev,
@@ -736,6 +778,7 @@ export default function Home() {
             images: data.images ?? [],
             texts: data.texts ?? [],
             error: data.error,
+            fetchedAt: Date.now(),
           },
         }));
       } catch (e: any) {
@@ -745,7 +788,10 @@ export default function Home() {
             loading: false,
             images: [],
             texts: [],
-            error: e?.message ?? "取得に失敗しました",
+            error:
+              e?.name === "AbortError"
+                ? "タイムアウトしました(電波を確認してください)"
+                : e?.message ?? "取得に失敗しました",
           },
         }));
       }
@@ -802,8 +848,9 @@ export default function Home() {
   const total = items.length;
   const doneCount = items.filter((it) => isDone(it)).length;
   const remainingPrice = useMemo(
-    () => items.filter((it) => !it.done).reduce((s, it) => s + (it.price ?? 0), 0),
-    [items]
+    () => items.filter((it) => !isDone(it)).reduce((s, it) => s + (it.price ?? 0), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, localDone, canComplete]
   );
   const hasPrice = priceProp != null && items.some((it) => it.price != null);
   const yen = (n: number) => "¥" + n.toLocaleString("ja-JP");
@@ -1001,10 +1048,10 @@ export default function Home() {
                     {group}
                   </span>
                   <span className="category-count">
-                    {list.filter((i) => !i.done).length}件
+                    {list.filter((i) => !isDone(i)).length}件
                     {hasPrice &&
                       ` · ${yen(
-                        list.filter((i) => !i.done).reduce((s, i) => s + (i.price ?? 0), 0)
+                        list.filter((i) => !isDone(i)).reduce((s, i) => s + (i.price ?? 0), 0)
                       )}`}
                   </span>
                 </div>
