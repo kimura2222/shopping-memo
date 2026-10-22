@@ -146,10 +146,6 @@ export default function Home() {
   const [databases, setDatabases] = useState<DbEntry[]>([]);
   const [activeDb, setActiveDb] = useState<string | null>(null);
   const activeDbRef = useRef<string | null>(null); // 最新のactiveDbを参照(イベントハンドラの陳腐化対策)
-  const [showAddDb, setShowAddDb] = useState(false);
-  const [dbUrl, setDbUrl] = useState("");
-  const [dbAddError, setDbAddError] = useState<string | null>(null);
-  const [dbBusy, setDbBusy] = useState(false);
   // 完了列が無いDB向けのローカル完了(端末にだけ保存、Notion非連動)
   const [localDone, setLocalDone] = useState<Set<string>>(new Set());
 
@@ -277,19 +273,25 @@ export default function Home() {
     return fullySynced;
   }
 
-  // 取得したデータベースを一覧に登録(既定DBの自動登録や新規追加時)
-  function registerDb(id: string, title: string) {
-    setDatabases((prev) => {
-      const found = prev.find((d) => d.id === id);
-      let next: DbEntry[];
-      if (found) {
-        next = prev.map((d) => (d.id === id ? { ...d, title } : d));
-      } else {
-        next = [...prev, { id, title }];
+  // Notionに接続されているDB一覧を取得(PC・スマホ共通)。オフライン用に端末にも保存。
+  // 選択中のDBが一覧から消えていたら(Notionで接続を外した等)、先頭のDBへ切り替える。
+  async function syncDbList() {
+    try {
+      const res = await fetchWithTimeout("/api/db/list", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list: DbEntry[] = Array.isArray(data.databases) ? data.databases : [];
+      if (list.length === 0) return; // デモ・取得失敗時は今の一覧のまま
+      setDatabases(list);
+      saveDatabases(list);
+      const cur = activeDbRef.current;
+      if (cur && !list.some((d) => d.id === cur)) {
+        activeDbRef.current = null; // selectDb の「同じDBなら何もしない」を回避
+        selectDb(list[0].id);
       }
-      saveDatabases(next);
-      return next;
-    });
+    } catch {
+      // オフライン等は保存済みの一覧を使う
+    }
   }
 
   // オンライン時: キュー同期 → 選択中DBを取得。オフライン時: キャッシュのまま。
@@ -307,32 +309,34 @@ export default function Home() {
     }
     // 取得中に別のDBへ切り替えられたら、この結果は捨てる
     // (反映すると別DBの中身が表示され、さらにそのDBのキャッシュとして保存されてしまう)
+    // 判定は応答が届いた時点で一度だけ行う(初回は下で activeDbRef を埋めるため、後から再判定すると誤る)
     const isStale = () => dbId !== activeDbRef.current;
+    let stale = false;
     try {
       const url = dbId ? `/api/items?db=${encodeURIComponent(dbId)}` : "/api/items";
       const res = await fetchWithTimeout(url, { cache: "no-store" });
       const data: ItemsResponse = await res.json();
-      if (isStale()) return;
+      stale = isStale();
+      if (stale) return;
       if (data.error && !(data.items && data.items.length)) {
         setError(data.error);
       } else {
         applyData(data, false);
         setError(data.error ?? null);
         markSynced();
-        // 取得できたDBを一覧に登録し、未選択なら選択する
-        if (data.dbId) {
-          registerDb(data.dbId, data.dbTitle ?? "データベース");
-          if (!activeDbRef.current) {
-            activeDbRef.current = data.dbId;
-            setActiveDb(data.dbId);
-            saveActiveDb(data.dbId);
-          }
+        // 未選択(初回)なら、表示できた既定DBを選択状態にする
+        if (data.dbId && !activeDbRef.current) {
+          activeDbRef.current = data.dbId;
+          setActiveDb(data.dbId);
+          saveActiveDb(data.dbId);
         }
+        syncDbList();
       }
     } catch {
-      if (!isStale()) setOnline(false);
+      stale = isStale();
+      if (!stale) setOnline(false);
     } finally {
-      if (!isStale()) setLoading(false);
+      if (!stale) setLoading(false);
     }
   }
 
@@ -353,51 +357,6 @@ export default function Home() {
       setLoading(true);
     }
     refresh(id);
-  }
-
-  // URLからデータベースを登録
-  async function addDatabaseByUrl() {
-    const url = dbUrl.trim();
-    if (!url) return;
-    setDbBusy(true);
-    setDbAddError(null);
-    try {
-      const res = await fetch("/api/db/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setDbAddError(data.error ?? "登録に失敗しました。");
-        return;
-      }
-      registerDb(data.id, data.title);
-      setDbUrl("");
-      setShowAddDb(false);
-      selectDb(data.id);
-    } catch {
-      setDbAddError("通信に失敗しました。オンラインか確認してください。");
-    } finally {
-      setDbBusy(false);
-    }
-  }
-
-  // 登録済みデータベースを一覧から削除
-  // (state更新関数の中で副作用を起こすと開発時に二重実行されるので、外で行う)
-  function removeDatabase(id: string) {
-    const next = databases.filter((d) => d.id !== id);
-    setDatabases(next);
-    saveDatabases(next);
-    if (activeDbRef.current !== id) return;
-    const fallback = next[0]?.id ?? null;
-    if (fallback) {
-      activeDbRef.current = null; // selectDb の「同じDBなら何もしない」を回避
-      selectDb(fallback);
-    } else {
-      activeDbRef.current = null;
-      setActiveDb(null);
-    }
   }
 
   // activeDb の最新値を ref に同期(イベントハンドラの陳腐化対策)
@@ -898,64 +857,21 @@ export default function Home() {
         </div>
       </header>
 
-      {/* データベース切替バー */}
-      {!demo && (
+      {/* データベース切替バー(一覧はNotionで「接続」したDB) */}
+      {!demo && databases.length > 0 && (
         <div className="db-bar">
-          {databases.length > 0 && (
-            <select
-              className="db-select"
-              value={activeDb ?? ""}
-              onChange={(e) => selectDb(e.target.value)}
-              title="表示するデータベース"
-            >
-              {databases.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.title}
-                </option>
-              ))}
-            </select>
-          )}
-          <button
-            className="btn"
-            onClick={() => {
-              setShowAddDb((v) => !v);
-              setDbAddError(null);
-            }}
+          <select
+            className="db-select"
+            value={activeDb ?? ""}
+            onChange={(e) => selectDb(e.target.value)}
+            title="表示するデータベース(Notionでインテグレーションに接続したDBが並びます)"
           >
-            {showAddDb ? "×" : "＋ DB追加"}
-          </button>
-          {activeDb && databases.length > 1 && (
-            <button
-              className="btn"
-              onClick={() => {
-                if (confirm("このデータベースを一覧から削除しますか?(Notion側は消えません)"))
-                  removeDatabase(activeDb);
-              }}
-              title="選択中のDBを一覧から外す"
-            >
-              削除
-            </button>
-          )}
-        </div>
-      )}
-
-      {showAddDb && !demo && (
-        <div className="db-add">
-          <input
-            className="search"
-            type="url"
-            placeholder="NotionデータベースのURLを貼り付け"
-            value={dbUrl}
-            onChange={(e) => setDbUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addDatabaseByUrl()}
-          />
-          <button className="btn primary" onClick={addDatabaseByUrl} disabled={dbBusy}>
-            {dbBusy ? "確認中…" : "登録"}
-          </button>
-          {dbAddError && <div className="db-add-error">{dbAddError}</div>}
-          <div className="db-add-hint">
-            ※ 対象DBを同じインテグレーションに「接続」しておいてください。リンクドDBのURLは不可。
-          </div>
+            {databases.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.title}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 

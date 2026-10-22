@@ -61,11 +61,10 @@ export function saveCache(dbId: string, data: CachedData) {
   safeSet(`${CACHE_KEY}:${dbId}`, data);
 }
 
-// 登録済みデータベースの一覧と選択中ID
+// データベース一覧(Notionから取得した最新をオフライン用に保存)と選択中ID
 export interface DbEntry {
   id: string;
   title: string;
-  url?: string;
 }
 
 export function loadDatabases(): DbEntry[] {

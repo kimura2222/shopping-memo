@@ -219,34 +219,6 @@ body {
   cursor: pointer;
 }
 
-.db-add {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card);
-}
-
-.db-add .search {
-  flex: 1 1 240px;
-}
-
-.db-add-error {
-  flex-basis: 100%;
-  color: #b91c1c;
-  font-size: 13px;
-}
-
-.db-add-hint {
-  flex-basis: 100%;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .banner {
   background: var(--accent-soft);
   border: 1px solid var(--accent);
