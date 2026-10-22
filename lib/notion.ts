@@ -15,7 +15,6 @@ export function normalizeDatabaseId(id?: string): string | undefined {
 }
 
 export const databaseId = normalizeDatabaseId(rawDatabaseId);
-export const isConfigured = Boolean(notionToken && databaseId);
 export const hasToken = Boolean(notionToken);
 
 // databases.retrieve の結果からタイトル文字列を得る

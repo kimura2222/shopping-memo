@@ -10,6 +10,7 @@ import type {
 } from "@/lib/notion";
 import { colorFor } from "@/lib/colors";
 import {
+  coalesceQueue,
   enqueue,
   loadActiveDb,
   loadCache,
@@ -29,6 +30,12 @@ import {
 } from "@/lib/offline";
 
 const MAX_SYNC_TRIES = 5;
+// Notionの回数制限(約3回/秒)・混雑で断られたときの再送間隔
+const THROTTLE_RETRIES = 2;
+const THROTTLE_WAIT_MS = 1000;
+const THROTTLE_RESUME_MS = 10_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // 会場の混雑回線で応答待ちのまま固まらないよう、通信に上限時間を設ける
 const SYNC_TIMEOUT_MS = 10_000;
@@ -204,11 +211,14 @@ export default function Home() {
   }
 
   // 溜まった更新をNotionへ順次同期。
+  // - 同じアイテムへの複数の更新は、最後の状態の1件にまとめてから送る
   // - ネットワーク不通: そのop以降を保持して中断(オンライン復帰時に再開)
+  // - Notionの回数制限・混雑(429/503): 捨てずに少し待って再送。続くなら中断して後で再開
   // - サーバー拒否(不正な値・削除済み等): 再試行回数を数え、上限で破棄して"詰まり"を防ぐ
   // 同時に2本走ると同じopを二重送信したり、到着順が入れ替わったりするため、
   // 呼び出しは前の同期が終わってから順に実行する(直列化)。
   const flushChainRef = useRef<Promise<boolean>>(Promise.resolve(true));
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   function flushQueue(): Promise<boolean> {
     const run = flushChainRef.current.then(flushQueueOnce, flushQueueOnce);
     flushChainRef.current = run;
@@ -226,26 +236,37 @@ export default function Home() {
       setPending(q.length);
       return false;
     }
+    const ops = coalesceQueue(q);
     const remaining: QueueOp[] = [];
     let dropped = 0;
     let networkFailed = false;
-    for (let i = 0; i < q.length; i++) {
-      const op = q[i];
-      if (networkFailed) {
-        remaining.push(op); // 不通後は手を付けず保持
+    let throttled = false;
+    for (const op of ops) {
+      if (networkFailed || throttled) {
+        remaining.push(op); // 中断後は手を付けず保持
         continue;
       }
       try {
-        const res = await fetchWithTimeout(
-          "/api/items",
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "update", id: op.id, props: op.props }),
-          },
-          SYNC_TIMEOUT_MS
-        );
-        if (res.ok) continue; // 成功 → キューから除去
+        let res: Response | null = null;
+        for (let attempt = 0; attempt <= THROTTLE_RETRIES; attempt++) {
+          if (attempt > 0) await sleep(THROTTLE_WAIT_MS * attempt);
+          res = await fetchWithTimeout(
+            "/api/items",
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "update", id: op.id, props: op.props }),
+            },
+            SYNC_TIMEOUT_MS
+          );
+          if (res.status !== 429 && res.status !== 503) break;
+        }
+        if (res!.ok) continue; // 成功 → キューから除去
+        if (res!.status === 429 || res!.status === 503) {
+          throttled = true; // 一時的な失敗 → 回数に数えず保持し、少し後に再開
+          remaining.push(op);
+          continue;
+        }
         // サーバーは応答したが失敗 → 再試行回数を加算、上限で破棄
         const tries = (op.tries ?? 0) + 1;
         if (tries >= MAX_SYNC_TRIES) dropped++;
@@ -261,6 +282,12 @@ export default function Home() {
     saveQueue(next);
     setPending(next.length);
     if (networkFailed) setOnline(false);
+    if (throttled && !retryTimerRef.current) {
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        flushQueue();
+      }, THROTTLE_RESUME_MS);
+    }
     const fullySynced = next.length === 0 && !networkFailed;
     if (dropped > 0) {
       setSyncError(
@@ -330,7 +357,6 @@ export default function Home() {
           setActiveDb(data.dbId);
           saveActiveDb(data.dbId);
         }
-        syncDbList();
       }
     } catch {
       stale = isStale();
@@ -387,6 +413,7 @@ export default function Home() {
     setLastSync(loadLastSync());
     if (typeof navigator !== "undefined") setOnline(navigator.onLine);
     refresh(initialActive);
+    syncDbList(); // DB一覧は起動時・手動更新・オンライン復帰時だけ取り直す(切替のたびには取らない)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -425,6 +452,7 @@ export default function Home() {
     function onOnline() {
       setOnline(true);
       refresh();
+      syncDbList();
     }
     function onOffline() {
       setOnline(false);
@@ -941,7 +969,10 @@ export default function Home() {
         </button>
         <button
           className="btn"
-          onClick={() => refresh()}
+          onClick={() => {
+            refresh();
+            syncDbList();
+          }}
           title={pending > 0 ? "同期して再読み込み" : "再読み込み"}
         >
           {pending > 0 ? `↻ 同期(${pending})` : "↻"}

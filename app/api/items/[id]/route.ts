@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getNotion, isConfigured } from "@/lib/notion";
+import { getNotion, hasToken } from "@/lib/notion";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  if (!isConfigured) {
+  if (!hasToken) {
     return NextResponse.json({ images: [], texts: [] });
   }
 

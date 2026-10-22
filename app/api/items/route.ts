@@ -43,22 +43,26 @@ export async function GET(request: Request) {
   try {
     const notion = getNotion();
 
-    // 1) スキーマ(列の型・選択肢・色)を取得
-    const db: any = await notion.databases.retrieve({ database_id: effectiveDb });
+    // スキーマ(列の型・選択肢・色)と全行(ページネーション対応)は互いに独立なので同時に取得
+    const queryAll = async () => {
+      const pages: any[] = [];
+      let cursor: string | undefined = undefined;
+      do {
+        const resp: any = await notion.databases.query({
+          database_id: effectiveDb,
+          start_cursor: cursor,
+          page_size: 100,
+        });
+        pages.push(...resp.results);
+        cursor = resp.has_more ? resp.next_cursor : undefined;
+      } while (cursor);
+      return pages;
+    };
+    const [db, pages]: [any, any[]] = await Promise.all([
+      notion.databases.retrieve({ database_id: effectiveDb }),
+      queryAll(),
+    ]);
     const schema = buildSchema(db.properties);
-
-    // 2) 全行を取得(ページネーション対応)
-    const pages: any[] = [];
-    let cursor: string | undefined = undefined;
-    do {
-      const resp: any = await notion.databases.query({
-        database_id: effectiveDb,
-        start_cursor: cursor,
-        page_size: 100,
-      });
-      pages.push(...resp.results);
-      cursor = resp.has_more ? resp.next_cursor : undefined;
-    } while (cursor);
 
     const items = pages.map((p) => normalizePage(p, schema));
 
@@ -108,7 +112,17 @@ export async function GET(request: Request) {
   }
 }
 
-// 更新: 完了チェックの切替 / 状態タグの変更
+// Notion側の一時的な失敗(回数制限・混雑)。クライアントは更新を捨てずに後で送り直す。
+const TRANSIENT_CODES = [
+  "rate_limited",
+  "conflict_error",
+  "service_unavailable",
+  "internal_server_error",
+  "gateway_timeout",
+  "notionhq_client_request_timeout",
+];
+
+// 更新: 1件のページの複数プロパティをまとめて更新(チェックと状態の連動・編集パネル)
 export async function PATCH(request: Request) {
   const body = await request.json().catch(() => ({}));
 
@@ -119,21 +133,6 @@ export async function PATCH(request: Request) {
 
   try {
     const notion = getNotion();
-
-    if (body.action === "done") {
-      const { id, done, doneProp } = body;
-      if (!id || typeof done !== "boolean" || !doneProp) {
-        return NextResponse.json(
-          { ok: false, error: "id / done / doneProp が必要です" },
-          { status: 400 }
-        );
-      }
-      await notion.pages.update({
-        page_id: id,
-        properties: { [doneProp]: { checkbox: done } },
-      });
-      return NextResponse.json({ ok: true });
-    }
 
     // 複数プロパティを1回でまとめて更新(チェックと状態の連動用)
     if (body.action === "update") {
@@ -191,34 +190,15 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    if (body.action === "setField") {
-      const { id, prop, type, value } = body;
-      if (!id || !prop || !type) {
-        return NextResponse.json(
-          { ok: false, error: "id / prop / type が必要です" },
-          { status: 400 }
-        );
-      }
-      // value が空文字なら選択解除
-      const payload =
-        type === "status"
-          ? { status: value ? { name: value } : null }
-          : { select: value ? { name: value } : null };
-      await notion.pages.update({
-        page_id: id,
-        properties: { [prop]: payload as any },
-      });
-      return NextResponse.json({ ok: true });
-    }
-
     return NextResponse.json(
       { ok: false, error: "不明な action です" },
       { status: 400 }
     );
   } catch (err: any) {
+    const transient = TRANSIENT_CODES.includes(err?.code);
     return NextResponse.json(
-      { ok: false, error: err?.message ?? "更新に失敗しました" },
-      { status: 500 }
+      { ok: false, error: err?.message ?? "更新に失敗しました", retry: transient },
+      { status: err?.code === "rate_limited" ? 429 : transient ? 503 : 500 }
     );
   }
 }

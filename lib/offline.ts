@@ -105,6 +105,27 @@ export function saveQueue(q: QueueOp[]) {
   safeSet(QUEUE_KEY, q);
 }
 
+// 同じアイテムへの更新を1件にまとめる(後の値で上書き)。
+// 例: オフライン中に「チェック→外す→チェック」→ 最後の状態だけを1回送る。
+// アイテムが違えば互いに独立なので、まとめた先の位置で送っても結果は同じ。
+export function coalesceQueue(q: QueueOp[]): QueueOp[] {
+  const byId = new Map<string, QueueOp>();
+  for (const op of q) {
+    const prev = byId.get(op.id);
+    if (!prev) {
+      byId.set(op.id, { ...op, props: [...op.props] });
+      continue;
+    }
+    for (const p of op.props) {
+      const i = prev.props.findIndex((x) => x.name === p.name);
+      if (i >= 0) prev.props[i] = p;
+      else prev.props.push(p);
+    }
+    prev.tries = Math.max(prev.tries ?? 0, op.tries ?? 0);
+  }
+  return [...byId.values()];
+}
+
 export function enqueue(op: QueueOp) {
   const q = loadQueue();
   q.push(op);
