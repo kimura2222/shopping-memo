@@ -718,3 +718,44 @@ body {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ---- ログイン画面 ---- */
+.login {
+  max-width: 360px;
+  padding-top: 18vh;
+  text-align: center;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 28px;
+  text-align: left;
+}
+
+.login-form .search {
+  flex: none;
+  font-size: 16px; /* iOS で入力時に勝手にズームしないよう16px以上 */
+}
+
+.login-form .btn {
+  padding: 12px 14px;
+  font-size: 15px;
+}
+
+.login-label {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.login-error {
+  color: var(--flag);
+  font-size: 14px;
+}
+
+.login-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}

@@ -40,7 +40,13 @@ async function fetchWithTimeout(input: string, init: RequestInit = {}, ms = FETC
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(input, { ...init, signal: ctrl.signal });
+    const res = await fetch(input, { ...init, signal: ctrl.signal });
+    if (res.status === 401) {
+      // ログイン切れ(パスコード変更など)。未同期の更新は端末に残したまま、ログイン画面へ。
+      location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+      throw new Error("ログインが必要です");
+    }
+    return res;
   } finally {
     clearTimeout(timer);
   }

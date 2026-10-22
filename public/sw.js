@@ -1,6 +1,6 @@
 // アプリ本体(HTML/JS/CSS/画像)をキャッシュして、電波が無くても起動できるようにする。
 // データ(/api)はキャッシュせず、オフライン時はアプリ側が localStorage を使う。
-const CACHE = "shopping-shell-v2";
+const CACHE = "shopping-shell-v3";
 // デプロイのたびにファイル名の違うJS/CSSが増えるので、古いものから捨てて上限を保つ
 const MAX_ENTRIES = 150;
 // 回線が混雑して応答が来ないとき、この時間待ってキャッシュがあればそちらを出す
@@ -53,8 +53,9 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const network = fetch(req).then((res) => {
-        // エラー応答(401/500など)をキャッシュするとオフライン時にそれが出てしまうので除外
-        if (res.ok && res.type === "basic") {
+        // エラー応答(401/500など)をキャッシュするとオフライン時にそれが出てしまうので除外。
+        // ログイン画面へリダイレクトされた応答も、"/" の中身として保存しないよう除外。
+        if (res.ok && res.type === "basic" && !res.redirected) {
           const saving = putInCache(req, res.clone()).catch(() => {});
           try {
             event.waitUntil(saving);
