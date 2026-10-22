@@ -45,6 +45,7 @@ export default function LoginPage() {
           id="passcode"
           className="search"
           type="password"
+          inputMode="numeric" // パスコードは数字なので、スマホでは数字キーボードを出す
           autoComplete="current-password"
           autoFocus
           value={passcode}
